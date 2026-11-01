@@ -1,0 +1,51 @@
+name: AGIS Catalog Bootstrap
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/rebuild-agis-catalog.py'
+      - '.github/workflows/agis-catalog-bootstrap.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: agis-catalog-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  build-catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build AGIS catalog and manifest
+        run: python3 scripts/rebuild-agis-catalog.py
+      - name: Verify generated catalog
+        run: |
+          python3 - <<'PY'
+          import sqlite3
+          con = sqlite3.connect('agis/game-content.sqlite')
+          print(con.execute('PRAGMA integrity_check').fetchone()[0])
+          print(dict(con.execute('SELECT category, COUNT(*) FROM content GROUP BY category')))
+          con.close()
+          PY
+      - name: Commit catalog artifacts
+        run: |
+          set -euo pipefail
+          git config user.name 'AGIS Catalog Bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add agis/game-content.sqlite agis/SOURCE_MANIFEST.json
+          if git diff --cached --quiet; then
+            echo 'Catalog already current.'
+            exit 0
+          fi
+          git commit -m 'chore: build AGIS content catalog and source manifest'
+          git push origin HEAD:main
