@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/deploy-backup.yml'
+      - 'agis/CLOUDFLARE_PROJECT_SNAPSHOT.json'
 
 permissions:
   contents: read
@@ -31,6 +32,7 @@ jobs:
           # Deployment-critical derived/catalog files are copied separately for fast restore/inspection.
           cp agis/SOURCE_MANIFEST.json "$OUT/SOURCE_MANIFEST.json"
           cp agis/game-content.sqlite "$OUT/game-content.sqlite"
+          cp agis/CLOUDFLARE_PROJECT_SNAPSHOT.json "$OUT/CLOUDFLARE_PROJECT_SNAPSHOT.json"
           cp docs/CLOUDFLARE-DEPLOYMENT.md "$OUT/CLOUDFLARE-DEPLOYMENT.md"
           cp docs/AGIS-ARCHITECTURE.md "$OUT/AGIS-ARCHITECTURE.md"
           cp docs/CONTENT-DATABASE.md "$OUT/CONTENT-DATABASE.md"
