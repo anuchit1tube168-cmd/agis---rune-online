@@ -1,0 +1,5 @@
+Cloudflare Pages production deployment trigger
+Project: agis-rune-online
+Branch: main
+Triggered: 2026-11-01T15:25:00Z
+Purpose: create the first Pages deployment after enabling GitHub production deploys.
