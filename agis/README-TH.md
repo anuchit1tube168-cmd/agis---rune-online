@@ -33,9 +33,9 @@ Colyseus + PostgreSQL + Redis ต้องรันบนเซิร์ฟเ�
 ## สถานะตรวจสอบ
 - Repository ของเรา: `anuchit1tube168-cmd/agis---rune-online` (branch `main`)
 - Source/assets ถูก import จาก upstream tag `v2.6.0` commit `c7a566e7752f51cdf31952d080ba5de387ab53c9` ผ่าน GitHub Actions แล้ว โดยไม่แตะ repository ต้นทาง
-- Content catalog เป้าหมาย: 975 records / 8 categories และตรวจด้วย `PRAGMA integrity_check`
+- Content catalog: 935 records / 8 categories และตรวจด้วย `PRAGMA integrity_check`
 - `SOURCE_MANIFEST.json` ใช้ตรวจ provenance และ checksum ของ snapshot
-- CI/Build ของ AGIS จะติดตั้ง dependencies แล้วรัน typecheck, tests และ client build ก่อนถือว่าพร้อม deploy
+- CI/Build ของ AGIS ติดตั้ง dependencies แล้วรัน typecheck, tests และ client build ก่อนถือว่าพร้อม deploy
 - Release binaries (DMG/EXE) ไม่ใช่ source-of-truth ของ repo นี้; หากต้องการ release desktop ของเราให้ build ใหม่จาก source และตรวจ digest
 
 ## GitHub operating rule
