@@ -285,7 +285,81 @@ let joinedAt = 0;
 let leaving = false; // true while we close the room ourselves (char select / logout)
 
 let playing: CharacterSummary | undefined; // the character in game (a map change rejoins with it)
+const DEMO_SESSION_ID = "demo-local-player";
+let demoState: any;
+
+function demoDir(dx: number, dy: number) {
+  const x = Math.sign(dx), y = Math.sign(dy);
+  if (!x && y > 0) return 0;
+  if (x > 0 && y > 0) return 1;
+  if (x > 0 && !y) return 2;
+  if (x > 0 && y < 0) return 3;
+  if (!x && y < 0) return 4;
+  if (x < 0 && y < 0) return 5;
+  if (x < 0 && !y) return 6;
+  if (x < 0 && y > 0) return 7;
+  return 0;
+}
+
+/** Browser-local smoke/demo mode used only by the public Pages frontend while the authoritative server is offline. */
+async function startDemoGame(c: CharacterSummary, to: MapName) {
+  playing = c;
+  if (c.look) preloadLook(c.look);
+  preloadMap(to);
+  loadMap(BACKDROP_SEED, to);
+  show(null);
+  $("hud").hidden = false;
+  joinedAt = performance.now();
+  Object.assign(cam, CAM_DEFAULT);
+
+  const s: any = {
+    name: c.name, job: c.job, level: c.level,
+    x: 32, y: 32, sx: 0, sy: 0, dir: 0, moving: false, dead: false, sitting: false,
+    gender: c.gender, hair: c.hair, style: c.style,
+    outfit: c.look?.outfit ?? "novice", weapon: c.look?.weapon ?? null,
+    shield: c.look?.shield ?? null, headgear: c.look?.headgear ?? null, garment: c.look?.garment ?? null,
+    opt: "",
+  };
+  demoState = s;
+  own = {
+    level: c.level, jobLevel: c.jobLevel, exp: c.exp, jobExp: c.jobExp,
+    statPoints: 0, skillPoints: 0,
+    hp: c.hp, maxHp: c.maxHp, sp: c.sp, maxSp: c.maxSp,
+    str: c.str, agi: c.agi, vit: c.vit, int: c.int, dex: c.dex, luk: c.luk,
+    weight: 0, maxWeight: 20000,
+  };
+
+  const fake = {
+    sessionId: DEMO_SESSION_ID,
+    send(type: unknown, payload: any) {
+      if (type !== Msg.move || !demoState || !map) return;
+      const e = entities.get(DEMO_SESSION_ID);
+      if (!e) return;
+      const x = Number(payload?.x), y = Number(payload?.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      demoState.dir = demoDir(x - demoState.x, y - demoState.y);
+      demoState.x = x; demoState.y = y; demoState.sx = 0; demoState.sy = 0; demoState.moving = false;
+      sync(e, demoState);
+      e.motion = newMotion(x, y, performance.now());
+      e.pos.set(x, heightAt(map, x, y), y);
+      e.obj.position.copy(e.pos);
+      e.target.set(x, y);
+      me = demoState;
+    },
+    leave: async () => undefined,
+  } as unknown as Room;
+
+  room = fake;
+  me = s;
+  const e = addEntity(DEMO_SESSION_ID, s, false, true);
+  e.hp = c.hp; e.maxHp = c.maxHp;
+  cam.target.set(s.x, 0.6, s.y);
+  banner("AGIS Demo World", "Browser-local preview · multiplayer server is not connected yet");
+  log("system", "DEMO MODE — click the ground to explore. Combat, persistence and multiplayer remain disabled until the authoritative server is deployed.");
+}
+
 async function startGame(c: CharacterSummary, to: MapName = isMapName(c.map) ? c.map : FIELD) {
+  if (session.token?.startsWith("demo:")) return startDemoGame(c, to);
   playing = c;
   if (c.look) preloadLook(c.look);
   preloadMap(to); // monster sheets download while the room joins; neighbouring maps' follow at idle time
