@@ -1,3 +1,7 @@
 name = "agis-rune-online"
 compatibility_date = "2026-11-01"
 pages_build_output_dir = "./client/dist"
+
+[[kv_namespaces]]
+binding = "GAME_STATE"
+id = "42aa85d4c0294a82a23e994d1d7249f6"
