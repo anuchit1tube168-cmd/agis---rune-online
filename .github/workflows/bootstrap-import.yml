@@ -35,7 +35,7 @@ jobs:
           set -euo pipefail
           rsync -a \
             --exclude='.git/' \
-            --exclude='.github/workflows/bootstrap-import.yml' \
+            --exclude='.github/' \
             /tmp/rune-upstream/ ./
           mkdir -p agis
           cp /tmp/upstream-sha agis/UPSTREAM_COMMIT.txt
