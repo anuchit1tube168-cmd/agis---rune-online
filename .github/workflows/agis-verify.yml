@@ -16,11 +16,14 @@ jobs:
           python-version: '3.12'
       - name: Verify AGIS snapshot and content catalog
         run: python3 scripts/verify-agis.py
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '12.14.0'
+          run_install: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22.18.0'
-      - name: Enable pnpm
-        run: corepack enable && corepack prepare pnpm@12.14.0 --activate
+          cache: pnpm
       - name: Install
         run: pnpm install --frozen-lockfile
       - name: Typecheck
