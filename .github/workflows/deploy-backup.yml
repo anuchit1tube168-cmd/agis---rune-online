@@ -1,0 +1,89 @@
+name: AGIS Deploy Backup
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-backup.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build deploy backup package
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA::12}"
+          OUT="backup/agis-rune-cloudflare-${SHORT_SHA}"
+          mkdir -p "$OUT"
+
+          # Complete tracked source snapshot. No .git directory and no untracked secrets are included.
+          git archive --format=zip --output="$OUT/source-${SHORT_SHA}.zip" HEAD
+
+          # Deployment-critical derived/catalog files are copied separately for fast restore/inspection.
+          cp agis/SOURCE_MANIFEST.json "$OUT/SOURCE_MANIFEST.json"
+          cp agis/game-content.sqlite "$OUT/game-content.sqlite"
+          cp docs/CLOUDFLARE-DEPLOYMENT.md "$OUT/CLOUDFLARE-DEPLOYMENT.md"
+          cp docs/AGIS-ARCHITECTURE.md "$OUT/AGIS-ARCHITECTURE.md"
+          cp docs/CONTENT-DATABASE.md "$OUT/CONTENT-DATABASE.md"
+          cp AGENTS.md "$OUT/AGENTS.md"
+          cp SKILL.md "$OUT/SKILL.md"
+          cp wrangler.toml "$OUT/wrangler.toml"
+          cp package.json pnpm-lock.yaml "$OUT/"
+
+          python3 - <<'PY'
+          import json, os, sqlite3
+          from pathlib import Path
+          out = Path('backup') / f"agis-rune-cloudflare-{os.environ['GITHUB_SHA'][:12]}"
+          con = sqlite3.connect('agis/game-content.sqlite')
+          counts = dict(con.execute('SELECT category, COUNT(*) FROM content GROUP BY category'))
+          total = sum(counts.values())
+          con.close()
+          meta = {
+              'repository': os.environ['GITHUB_REPOSITORY'],
+              'commit': os.environ['GITHUB_SHA'],
+              'branch': os.environ.get('GITHUB_REF_NAME', 'main'),
+              'cloudflare_project': 'agis-rune-online',
+              'cloudflare_pages_domain': 'agis-rune-online.pages.dev',
+              'cloudflare_build_command': 'bash scripts/build-pages.sh',
+              'cloudflare_output_directory': 'client/dist',
+              'required_runtime_env': ['VITE_SERVER_URL'],
+              'secrets_included': False,
+              'content_counts': counts,
+              'content_total': total,
+              'restore_rule': 'Restore source first; configure VITE_SERVER_URL as a Cloudflare environment variable/secret. Do not commit tokens or service credentials.'
+          }
+          (out / 'DEPLOY-MANIFEST.json').write_text(json.dumps(meta, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+          PY
+
+          cat > "$OUT/RESTORE.txt" <<'EOF'
+          AGIS Rune deploy backup
+          =======================
+          1) Restore source-<sha>.zip into a clean Git repository.
+          2) Preserve LICENSE and assets/CREDITS.md.
+          3) Run: python3 scripts/verify-agis.py
+          4) Run Node 22.18+ / pnpm 12.14.0, then pnpm install --frozen-lockfile and pnpm build.
+          5) Cloudflare Pages: project agis-rune-online, production branch main.
+          6) Build command: bash scripts/build-pages.sh
+          7) Output directory: client/dist
+          8) Set VITE_SERVER_URL to OUR HTTPS/WSS-capable game server endpoint before production deployment.
+          9) No token, password, service-role key or other secret is stored in this backup.
+          EOF
+
+          (cd "$OUT" && sha256sum * > SHA256SUMS.txt)
+
+      - name: Upload deploy backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agis-rune-cloudflare-deploy-backup
+          path: backup/agis-rune-cloudflare-*/
+          if-no-files-found: error
+          retention-days: 90
