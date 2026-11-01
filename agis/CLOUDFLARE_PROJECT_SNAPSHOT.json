@@ -1,0 +1,39 @@
+{
+  "snapshot_date": "2026-11-01",
+  "contains_secrets": false,
+  "project": {
+    "name": "agis-rune-online",
+    "subdomain": "agis-rune-online.pages.dev",
+    "production_branch": "main",
+    "source": {
+      "type": "github",
+      "owner": "anuchit1tube168-cmd",
+      "owner_id": "266664565",
+      "repo_name": "agis---rune-online",
+      "repo_id": "1441898269",
+      "deployments_enabled": false,
+      "production_deployments_enabled": false,
+      "preview_deployment_setting": "none"
+    },
+    "build": {
+      "root_dir": "/",
+      "build_command": "bash scripts/build-pages.sh",
+      "destination_dir": "client/dist",
+      "required_environment": [
+        "VITE_SERVER_URL"
+      ]
+    },
+    "deployment": {
+      "latest_deployment": null,
+      "canonical_deployment": null,
+      "compatibility_date": "2026-11-01",
+      "build_image_major_version": 3
+    }
+  },
+  "restore_notes": [
+    "Reconnect the GitHub repository to the Cloudflare Pages project.",
+    "Keep automatic production deployment disabled until VITE_SERVER_URL points to our own HTTPS/WSS-capable game server.",
+    "Do not store API tokens, passwords, service-role keys, database passwords, or private signing keys in this file or repository.",
+    "After the backend endpoint is ready, set VITE_SERVER_URL in Cloudflare environment variables and run the verification gate before enabling deployment."
+  ]
+}
