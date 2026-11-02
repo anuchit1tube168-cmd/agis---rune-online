@@ -27,7 +27,10 @@ async function digestToken(token: string) {
 }
 async function derive(password: string, salt: Uint8Array, iterations: number) {
   const key = await crypto.subtle.importKey("raw", te.encode(password), "PBKDF2", false, ["deriveBits"]);
-  return new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256));
+  // Cloudflare Workers WebCrypto is strict about BufferSource types. Copy into a fresh ArrayBuffer
+  // instead of passing a Uint8Array whose backing buffer may be typed as ArrayBufferLike/SharedArrayBuffer.
+  const saltBuffer = new Uint8Array(salt).buffer;
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: saltBuffer, iterations }, key, 256));
 }
 async function makeAccount(username: string, password: string): Promise<Account> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -72,95 +75,100 @@ function seedCharacter(username: string) {
 }
 
 export async function onRequest(context: any) {
-  const req: Request = context.request;
-  const kv = context.env.GAME_STATE;
-  if (!kv) return bad(503, "game state binding unavailable");
-  const url = new URL(req.url);
-  const path = url.pathname.replace(/^\/api\/?/, "");
-  const method = req.method.toUpperCase();
+  try {
+    const req: Request = context.request;
+    const kv = context.env.GAME_STATE;
+    if (!kv) return bad(503, "game state binding unavailable");
+    const url = new URL(req.url);
+    const path = url.pathname.replace(/^\/api\/?/, "");
+    const method = req.method.toUpperCase();
 
-  if (method === "OPTIONS") return new Response(null, { status: 204 });
-  if (method === "GET" && path === "healthz") return json({ ok: true, service: "agis-rune-edge", store: "kv", time: new Date().toISOString() });
+    if (method === "OPTIONS") return new Response(null, { status: 204 });
+    if (method === "GET" && path === "healthz") return json({ ok: true, service: "agis-rune-edge", store: "kv", time: new Date().toISOString() });
 
-  if (method === "POST" && path === "register") {
-    const b = await body(req);
-    const username = String(b.username ?? "").trim().toLowerCase();
-    const password = String(b.password ?? "");
-    if (!USER_RE.test(username)) return bad(400, "username: 4–24 characters, a–z 0–9 _");
-    if (password.length < 8 || password.length > 72) return bad(400, "password: 8–72 characters");
-    const key = `user:${username}`;
-    if (await kv.get(key)) return bad(409, "that username is taken");
-    const account = await makeAccount(username, password);
-    await kv.put(key, JSON.stringify(account));
-    const c = seedCharacter(username);
-    await kv.put(`chars:${account.id}`, JSON.stringify([c]));
-    await kv.put(`charname:${c.name.toLowerCase()}`, JSON.stringify({ accountId: account.id, id: c.id }));
-    return json({ token: await createSession(kv, { accountId: account.id, username }), username });
-  }
+    if (method === "POST" && path === "register") {
+      const b = await body(req);
+      const username = String(b.username ?? "").trim().toLowerCase();
+      const password = String(b.password ?? "");
+      if (!USER_RE.test(username)) return bad(400, "username: 4–24 characters, a–z 0–9 _");
+      if (password.length < 8 || password.length > 72) return bad(400, "password: 8–72 characters");
+      const key = `user:${username}`;
+      if (await kv.get(key)) return bad(409, "that username is taken");
+      const account = await makeAccount(username, password);
+      await kv.put(key, JSON.stringify(account));
+      const c = seedCharacter(username);
+      await kv.put(`chars:${account.id}`, JSON.stringify([c]));
+      await kv.put(`charname:${c.name.toLowerCase()}`, JSON.stringify({ accountId: account.id, id: c.id }));
+      return json({ token: await createSession(kv, { accountId: account.id, username }), username });
+    }
 
-  if (method === "POST" && path === "login") {
-    const b = await body(req);
-    const username = String(b.username ?? "").trim().toLowerCase();
-    const password = String(b.password ?? "");
-    const raw = await kv.get(`user:${username}`);
-    if (!raw) return bad(401, "wrong username or password");
-    const account = JSON.parse(raw) as Account;
-    if (!(await verify(password, account))) return bad(401, "wrong username or password");
-    return json({ token: await createSession(kv, { accountId: account.id, username }), username });
-  }
+    if (method === "POST" && path === "login") {
+      const b = await body(req);
+      const username = String(b.username ?? "").trim().toLowerCase();
+      const password = String(b.password ?? "");
+      const raw = await kv.get(`user:${username}`);
+      if (!raw) return bad(401, "wrong username or password");
+      const account = JSON.parse(raw) as Account;
+      if (!(await verify(password, account))) return bad(401, "wrong username or password");
+      return json({ token: await createSession(kv, { accountId: account.id, username }), username });
+    }
 
-  const auth = await requireSession(req, kv);
-  if (auth instanceof Response) return auth;
-  const { session, token } = auth;
-  const charsKey = `chars:${session.accountId}`;
+    const auth = await requireSession(req, kv);
+    if (auth instanceof Response) return auth;
+    const { session, token } = auth;
+    const charsKey = `chars:${session.accountId}`;
 
-  if (method === "POST" && path === "logout") {
-    await kv.delete(`session:${await digestToken(token)}`);
-    return json({ ok: true });
-  }
-  if (method === "GET" && path === "characters") {
-    const raw = await kv.get(charsKey);
-    return json(raw ? JSON.parse(raw) : []);
-  }
-  if (method === "POST" && path === "characters") {
-    const b = await body(req);
-    const name = String(b.name ?? "").trim();
-    const slot = Number(b.slot), hair = Number(b.hair), style = b.style === undefined ? 0 : Number(b.style);
-    const gender = b.gender === "F" ? "F" : b.gender === "M" ? "M" : "";
-    if (!NAME_RE.test(name)) return bad(400, "name: 2–16 letters, numbers, spaces or _");
-    if (!Number.isInteger(slot) || slot < 0 || slot > 8) return bad(400, "invalid slot");
-    if (!gender) return bad(400, "invalid gender");
-    if (!Number.isInteger(hair) || hair < 0 || hair > 31 || !Number.isInteger(style) || style < 0 || style > 31) return bad(400, "invalid look");
-    if (await kv.get(`charname:${name.toLowerCase()}`)) return bad(409, "that name is taken");
-    const raw = await kv.get(charsKey);
-    const chars = raw ? JSON.parse(raw) : [];
-    if (chars.some((x: any) => x.slot === slot)) return bad(409, "that slot is already used");
-    const id = Date.now() * 1000 + Math.floor(Math.random() * 1000);
-    const next = {
-      id, slot, name, job: "Novice", level: 1, jobLevel: 1, exp: 0, jobExp: 0,
-      str: 1, agi: 1, vit: 1, int: 1, dex: 1, luk: 1, hp: 80, maxHp: 80, sp: 20, maxSp: 20,
-      gender, hair, style,
-      look: { gender, hair, style, outfit: "novice", weapon: null, shield: null, headgear: null, garment: null },
-      map: "f1_field01",
-    };
-    chars.push(next);
-    await kv.put(charsKey, JSON.stringify(chars));
-    await kv.put(`charname:${name.toLowerCase()}`, JSON.stringify({ accountId: session.accountId, id }));
-    return json(next);
-  }
-  const del = path.match(/^characters\/(\d+)$/);
-  if (method === "DELETE" && del) {
-    const b = await body(req);
-    const id = Number(del[1]);
-    const raw = await kv.get(charsKey);
-    const chars = raw ? JSON.parse(raw) : [];
-    const found = chars.find((x: any) => x.id === id);
-    if (!found) return bad(404, "character not found");
-    if (String(b.confirmName ?? "") !== found.name) return bad(400, "type the character's exact name to delete it");
-    await kv.put(charsKey, JSON.stringify(chars.filter((x: any) => x.id !== id)));
-    await kv.delete(`charname:${found.name.toLowerCase()}`);
-    return json({ ok: true });
-  }
+    if (method === "POST" && path === "logout") {
+      await kv.delete(`session:${await digestToken(token)}`);
+      return json({ ok: true });
+    }
+    if (method === "GET" && path === "characters") {
+      const raw = await kv.get(charsKey);
+      return json(raw ? JSON.parse(raw) : []);
+    }
+    if (method === "POST" && path === "characters") {
+      const b = await body(req);
+      const name = String(b.name ?? "").trim();
+      const slot = Number(b.slot), hair = Number(b.hair), style = b.style === undefined ? 0 : Number(b.style);
+      const gender = b.gender === "F" ? "F" : b.gender === "M" ? "M" : "";
+      if (!NAME_RE.test(name)) return bad(400, "name: 2–16 letters, numbers, spaces or _");
+      if (!Number.isInteger(slot) || slot < 0 || slot > 8) return bad(400, "invalid slot");
+      if (!gender) return bad(400, "invalid gender");
+      if (!Number.isInteger(hair) || hair < 0 || hair > 31 || !Number.isInteger(style) || style < 0 || style > 31) return bad(400, "invalid look");
+      if (await kv.get(`charname:${name.toLowerCase()}`)) return bad(409, "that name is taken");
+      const raw = await kv.get(charsKey);
+      const chars = raw ? JSON.parse(raw) : [];
+      if (chars.some((x: any) => x.slot === slot)) return bad(409, "that slot is already used");
+      const id = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+      const next = {
+        id, slot, name, job: "Novice", level: 1, jobLevel: 1, exp: 0, jobExp: 0,
+        str: 1, agi: 1, vit: 1, int: 1, dex: 1, luk: 1, hp: 80, maxHp: 80, sp: 20, maxSp: 20,
+        gender, hair, style,
+        look: { gender, hair, style, outfit: "novice", weapon: null, shield: null, headgear: null, garment: null },
+        map: "f1_field01",
+      };
+      chars.push(next);
+      await kv.put(charsKey, JSON.stringify(chars));
+      await kv.put(`charname:${name.toLowerCase()}`, JSON.stringify({ accountId: session.accountId, id }));
+      return json(next);
+    }
+    const del = path.match(/^characters\/(\d+)$/);
+    if (method === "DELETE" && del) {
+      const b = await body(req);
+      const id = Number(del[1]);
+      const raw = await kv.get(charsKey);
+      const chars = raw ? JSON.parse(raw) : [];
+      const found = chars.find((x: any) => x.id === id);
+      if (!found) return bad(404, "character not found");
+      if (String(b.confirmName ?? "") !== found.name) return bad(400, "type the character's exact name to delete it");
+      await kv.put(charsKey, JSON.stringify(chars.filter((x: any) => x.id !== id)));
+      await kv.delete(`charname:${found.name.toLowerCase()}`);
+      return json({ ok: true });
+    }
 
-  return bad(404, "not found");
+    return bad(404, "not found");
+  } catch (error) {
+    console.error("AGIS edge API error", error);
+    return bad(500, "edge API runtime error");
+  }
 }
